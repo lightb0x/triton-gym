@@ -9,7 +9,7 @@ computes `relu(A + B)` or `max(A + B, 0)` elementwise
 
 ## How to run
 ```bash
-python3 add.py
+python3 test_and_bench.py
 ```
 
 ## Take-home message
