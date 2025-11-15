@@ -1,0 +1,2 @@
+triton>=3.4.0
+pandas
