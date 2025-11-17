@@ -1,5 +1,5 @@
 # Quantizer module
-Quantizes into *tensor-wise* FP8_e5m2
+Quantizes into *tensor-wise* or *square-tilewise* FP8_e5m2
 
 ## Blueprint
 Assume matrix multiplication (same as [PyTorch `Linear`](https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.linear.html))
