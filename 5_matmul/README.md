@@ -31,6 +31,9 @@ python3 test_and_bench.py
 ```
 
 ## Take-home message
+- Memory access pattern of `matmul`
+  - is different from other kernels
+  - depends heavily on cache hit
 - matrix multiplication in Triton is not that hard (straightforward compared to CUDA)
 - PyTorch modules are picky with respect to choice of datatypes
   - does not support `torch.float8_e5m2` inputs yet, as of Nov 2025
