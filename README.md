@@ -4,7 +4,7 @@
 - `2_softmax` : [tutorial] 2D kernel
 - `3_add` : 1D adder module
 - `4_quantize_fp8` : 2D module (tensorwise & square-blockwise quantization)
-- `5_gemm` : matrix multiplication module
+- `5_matmul` : [tutorial] matrix multiplication
 
 where
 - tutorial : not wrapped into PyTorch layer
