@@ -45,7 +45,6 @@ def benchmark(N, provider, is_bias, is_fp8):
     stream = getattr(torch, DEVICE.type).Stream()
     getattr(torch, DEVICE.type).set_stream(stream)
     if provider == "torch":
-        func = torch.nn.functional.linear
         func = torch.matmul
     else:
         assert provider == "triton"
