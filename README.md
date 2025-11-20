@@ -5,6 +5,7 @@
 - `3_add` : 1D adder module
 - `4_quantize_fp8` : 2D module (tensorwise & square-blockwise quantization)
 - `5_matmul` : [tutorial] matrix multiplication
+- `6_gemm_fp8` : PyTorch `Linear` module with block-wise FP8 quantization
 
 where
 - tutorial : not wrapped into PyTorch layer
