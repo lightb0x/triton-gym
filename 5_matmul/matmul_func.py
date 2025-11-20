@@ -46,6 +46,9 @@ def matmul_kernel(
     BN: tl.constexpr,
     BK: tl.constexpr,
 ):
+    # fixed GM
+    # GM: tl.constexpr = 8
+
     # Adaptive GM
     # # consistently outperforms fixed GM=8 on average
     # # BF16 bias=False --> 0.0426197 %
