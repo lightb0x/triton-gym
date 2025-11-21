@@ -112,6 +112,7 @@ def fp32_maxexp(x, axis=None, keep_dims=False):
     x_exp = (x_i32 & 0x7F80_0000) >> 23  # extract exponent from 1-8-23
     return tl.max(x_exp, axis=axis, keep_dims=keep_dims) - 127  # fp32 bias 127
 
+
 @triton.jit
 def fp32_absmax(x, axis=None, keep_dims=False):
     x_i32 = tl.cast(x, dtype=tl.int32, bitcast=True)

@@ -20,11 +20,13 @@ def gen_linear_func(max_exp, use_bias):
 
             act = act.view(-1, act.shape[-1])
 
-            act_fp8_bwd, act_scale_bwd, act_fp8_fwd, act_scale_fwd = (
-                quantize_fp8(act, max_exp, is_sqtile=False)
+            act_fp8_bwd, act_scale_bwd, act_fp8_fwd, act_scale_fwd = quantize_fp8(
+                act, max_exp, is_sqtile=False
             )
             # wgt.t : (K, N)
-            wgt_fp8, wgt_scale_r, _, wgt_scale_l = quantize_fp8(wgt, max_exp, is_sqtile=True, out_trans=True)
+            wgt_fp8, wgt_scale_r, _, wgt_scale_l = quantize_fp8(
+                wgt, max_exp, is_sqtile=True, out_trans=True
+            )
 
             ctx.save_for_backward(act_fp8_bwd, act_scale_bwd, wgt_fp8, wgt_scale_l)
 
@@ -44,7 +46,9 @@ def gen_linear_func(max_exp, use_bias):
 
             # grad_out.t : (N, M)
             grad_out_fp8_r, grad_out_scale_r, grad_out_fp8_l, grad_out_scale_l = (
-                quantize_fp8(grad_output.contiguous(), max_exp, is_sqtile=False, out_trans=True)
+                quantize_fp8(
+                    grad_output.contiguous(), max_exp, is_sqtile=False, out_trans=True
+                )
             )
 
             # grad_out.t @ act : (N, M) @ (M, K) --> (N, K)
@@ -66,7 +70,11 @@ def gen_linear_func(max_exp, use_bias):
             )
 
             if use_bias:
-                return grad_act, grad_wgt, grad_output.view(-1, grad_output.shape[-1]).sum(dim=0)
+                return (
+                    grad_act,
+                    grad_wgt,
+                    grad_output.view(-1, grad_output.shape[-1]).sum(dim=0),
+                )
             else:
                 return grad_act, grad_wgt, None
 

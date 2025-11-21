@@ -33,7 +33,9 @@ def quantize_fp8_e8_func(x, max_exp, axis):
 @triton.jit
 def quantize_fp8_e8m23_func(x, max_exp, axis):
     # fp8_e5m2 max = 1.75 * 2**15 = 57,344
-    max_val = tl.cast((((max_exp + 127) & 0x0000_00FF) << 23) | (0x3 << 21), tl.float32, bitcast=True)
+    max_val = tl.cast(
+        (((max_exp + 127) & 0x0000_00FF) << 23) | (0x3 << 21), tl.float32, bitcast=True
+    )
     x_absmax = fp32_absmax(x, axis, keep_dims=True)
     x_scale = x_absmax / max_val
     x_fp8 = tl.cast(x / x_scale, dtype=tl.float8e5)
@@ -83,7 +85,6 @@ def quantize_fp8_kernel(
         stride_out_sm = SN
         stride_out_sn = 1
 
-
     for i_m in tl.static_range(0, BM):
         for i_n in tl.static_range(0, BN):
             offs_m = (
@@ -104,7 +105,6 @@ def quantize_fp8_kernel(
             else:
                 mask_out_m = offs_m[:, None] < M
                 mask_out_n = offs_n[None, :] < N
-
 
             if is_sqtile:
                 x_fp8, x_scale = quantize_fp8_e8_func(x, max_exp, axis=None)
@@ -158,10 +158,8 @@ def quantize_fp8_kernel(
                     )
                     tl.store(g_x_fp8_l_ptrs, x_fp8_l, mask=mask_out_m & mask_out_n)
 
-
             offs_sm = pid_m * BM + i_m + tl.arange(0, 1)
             offs_sn = pid_n * BN + i_n + tl.arange(0, 1)
-
 
             if out_trans:
                 # value scale_r.t to GMEM scale_l
@@ -170,7 +168,11 @@ def quantize_fp8_kernel(
                     offs_n[:, None] * stride_out_sn + offs_sm[None, :] * stride_out_m
                 )
                 mask_out_sm = offs_sm[None, :] < SM
-                tl.store(g_x_scale_l_ptrs, tl.trans(x_scale_r, (1, 0)), mask=mask_out_n & mask_out_sm)
+                tl.store(
+                    g_x_scale_l_ptrs,
+                    tl.trans(x_scale_r, (1, 0)),
+                    mask=mask_out_n & mask_out_sm,
+                )
 
                 # value scale_l.t to GMEM scale_r
                 # (1, BLOCK_SIZE) out of (cdiv(N, BLOCK_SIZE), M)
@@ -178,7 +180,11 @@ def quantize_fp8_kernel(
                     offs_sn[:, None] * stride_out_n + offs_m[None, :] * stride_out_sm
                 )
                 mask_out_sn = offs_sn[:, None] < SN
-                tl.store(g_x_scale_r_ptrs, tl.trans(x_scale_l, (1, 0)), mask=mask_out_sn & mask_out_m)
+                tl.store(
+                    g_x_scale_r_ptrs,
+                    tl.trans(x_scale_l, (1, 0)),
+                    mask=mask_out_sn & mask_out_m,
+                )
 
             else:
                 # (1, BLOCK_SIZE) out of (cdiv(M, BLOCK_SIZE), N)
@@ -228,7 +234,17 @@ def quantize_fp8(x, max_exp: int, is_sqtile: bool = False, out_trans: bool = Fal
     x_scale_l = torch.empty(scale_l_shape, device=x.device)
 
     quantize_fp8_kernel[grid](
-        x, x_fp8_r, x_scale_r, x_fp8_l, x_scale_l, M, N, block_size, max_exp, is_sqtile, out_trans
+        x,
+        x_fp8_r,
+        x_scale_r,
+        x_fp8_l,
+        x_scale_l,
+        M,
+        N,
+        block_size,
+        max_exp,
+        is_sqtile,
+        out_trans,
     )
 
     return x_fp8_r, x_scale_r, x_fp8_l, x_scale_l
@@ -242,7 +258,9 @@ if __name__ == "__main__":
     seed = 42
     block_size = 4
 
-    def quantize_fp8_baseline(x, max_exp: int, is_sqtile: bool = False, out_trans: bool = False):
+    def quantize_fp8_baseline(
+        x, max_exp: int, is_sqtile: bool = False, out_trans: bool = False
+    ):
         assert len(x.shape) == 2
         block_size = BLOCK_SIZE
         M, N = x.shape
@@ -251,19 +269,43 @@ if __name__ == "__main__":
         assert N % block_size == 0
 
         if is_sqtile:
-            x_block = x.view(M // block_size, block_size, N // block_size, block_size).transpose(1, 2).reshape(M//block_size, N//block_size, -1)
-            x_maxexp = torch.log2(x_block.abs().max(dim=-1, keepdims=True).values).floor()
+            x_block = (
+                x.view(M // block_size, block_size, N // block_size, block_size)
+                .transpose(1, 2)
+                .reshape(M // block_size, N // block_size, -1)
+            )
+            x_maxexp = torch.log2(
+                x_block.abs().max(dim=-1, keepdims=True).values
+            ).floor()
 
-            x_maxexp_bc = x_maxexp.view(M//block_size, N//block_size, 1, 1).broadcast_to(M // block_size, N // block_size, block_size, block_size).transpose(1,2).reshape(
-                M, N
+            x_maxexp_bc = (
+                x_maxexp.view(M // block_size, N // block_size, 1, 1)
+                .broadcast_to(M // block_size, N // block_size, block_size, block_size)
+                .transpose(1, 2)
+                .reshape(M, N)
             )
             x_fp8 = (x * 2 ** (max_exp - x_maxexp_bc)).to(torch.float8_e5m2)
 
-            x_scale_r = 2 ** (x_maxexp.view(M // block_size, N // block_size, 1).broadcast_to(M // block_size, N // block_size, block_size).reshape(M // block_size, N) - max_exp)
-            x_scale_l = 2 ** (x_maxexp.view(M // block_size, 1, N // block_size).broadcast_to(M // block_size, block_size, N // block_size).reshape(M, N // block_size) - max_exp)
+            x_scale_r = 2 ** (
+                x_maxexp.view(M // block_size, N // block_size, 1)
+                .broadcast_to(M // block_size, N // block_size, block_size)
+                .reshape(M // block_size, N)
+                - max_exp
+            )
+            x_scale_l = 2 ** (
+                x_maxexp.view(M // block_size, 1, N // block_size)
+                .broadcast_to(M // block_size, block_size, N // block_size)
+                .reshape(M, N // block_size)
+                - max_exp
+            )
 
             if out_trans:
-                return x_fp8.t().contiguous(), x_scale_l.t().contiguous(), None, x_scale_r.t().contiguous()
+                return (
+                    x_fp8.t().contiguous(),
+                    x_scale_l.t().contiguous(),
+                    None,
+                    x_scale_r.t().contiguous(),
+                )
             else:
                 return x_fp8, x_scale_r, None, x_scale_l
 
@@ -289,7 +331,12 @@ if __name__ == "__main__":
             x_fp8_r = (x * 2 ** (max_exp - x_maxexp_bc)).to(torch.float8_e5m2)
 
             if out_trans:
-                return x_fp8_l.t().contiguous(), x_scale_l.t().contiguous(), x_fp8_r.t().contiguous(), x_scale_r.t().contiguous()
+                return (
+                    x_fp8_l.t().contiguous(),
+                    x_scale_l.t().contiguous(),
+                    x_fp8_r.t().contiguous(),
+                    x_scale_r.t().contiguous(),
+                )
             else:
                 return x_fp8_r, x_scale_r, x_fp8_l, x_scale_l
 
@@ -301,7 +348,10 @@ if __name__ == "__main__":
     ]:
         for is_sqtile in [True, False]:
             for out_trans in [True, False]:
-                print(f"shape : {shape}, sqtile: {is_sqtile}, trans: {out_trans}", end="\t")
+                print(
+                    f"shape : {shape}, sqtile: {is_sqtile}, trans: {out_trans}",
+                    end="\t",
+                )
                 gen = torch.Generator(device=DEVICE).manual_seed(seed)
                 t1 = torch.randn(shape, device=DEVICE, generator=gen)
 
@@ -323,8 +373,12 @@ if __name__ == "__main__":
                     t1 = t1.t().contiguous()
 
                     if not is_sqtile:
-                        right_error = torch.nn.functional.mse_loss(gm_fp8_r.to(torch.float), ours_fp8_r.to(torch.float))
-                        left_error = torch.nn.functional.mse_loss(gm_fp8_l.to(torch.float), ours_fp8_l.to(torch.float))
+                        right_error = torch.nn.functional.mse_loss(
+                            gm_fp8_r.to(torch.float), ours_fp8_r.to(torch.float)
+                        )
+                        left_error = torch.nn.functional.mse_loss(
+                            gm_fp8_l.to(torch.float), ours_fp8_l.to(torch.float)
+                        )
                         print(f"right tensor error : {right_error}")
                         print(f"left tensor error : {left_error}")
                         if right_error > 1e-1:
@@ -336,9 +390,12 @@ if __name__ == "__main__":
                             print(ours_fp8_l)
                             exit()
 
-
-                    print(f"right scale error : {torch.nn.functional.mse_loss(gm_scale_r, ours_scale_r)}")
-                    print(f"left scale error : {torch.nn.functional.mse_loss(gm_scale_l, ours_scale_l)}")
+                    print(
+                        f"right scale error : {torch.nn.functional.mse_loss(gm_scale_r, ours_scale_r)}"
+                    )
+                    print(
+                        f"left scale error : {torch.nn.functional.mse_loss(gm_scale_l, ours_scale_l)}"
+                    )
 
                 assert ours_fp8_r.shape == gm_fp8_r.shape
                 assert ours_scale_r.shape == gm_scale_r.shape, (
@@ -375,7 +432,9 @@ if __name__ == "__main__":
                 else:
                     left = torch.allclose(t1, gm_l_recon, rtol=0.25)
                     right = torch.allclose(t1, gm_r_recon, rtol=0.25)
-                    print(f"validate: orig compared to gm --> left={left}, right={right}")
+                    print(
+                        f"validate: orig compared to gm --> left={left}, right={right}"
+                    )
 
                 if is_sqtile:
                     right = torch.allclose(t1, ours_r_recon, rtol=0.25)
@@ -383,7 +442,9 @@ if __name__ == "__main__":
                 else:
                     left = torch.allclose(t1, ours_l_recon, rtol=0.25)
                     right = torch.allclose(t1, ours_r_recon, rtol=0.25)
-                    print(f"validate: orig compared to ours --> left={left}, right={right}")
+                    print(
+                        f"validate: orig compared to ours --> left={left}, right={right}"
+                    )
 
     # benchmark
     _CONFIGS = [
@@ -395,9 +456,12 @@ if __name__ == "__main__":
             line_names=["Triton", "Torch"],
             styles=[("green", "-"), ("blue", "-")],
             ylabel="Gelem/s",
-            plot_name="-".join(["quantize_fp8", f"sqtile{is_sqtile}", f"trans{out_trans}"]),
+            plot_name="-".join(
+                ["quantize_fp8", f"sqtile{is_sqtile}", f"trans{out_trans}"]
+            ),
             args={"is_sqtile": is_sqtile, "out_trans": out_trans},
-        ) for (is_sqtile, out_trans) in [
+        )
+        for (is_sqtile, out_trans) in [
             (True, True),
             (True, False),
             (False, True),

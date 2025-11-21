@@ -319,7 +319,9 @@ if __name__ == "__main__":
         lhs_fp8_r, lhs_scale_r, lhs_fp8_l, lhs_scale_l = quantize_fp8(
             lhs, max_exp=max_exp, is_sqtile=False
         )
-        rhs_fp8, rhs_scale_r, _, rhs_scale_l = quantize_fp8(rhs, max_exp=max_exp, is_sqtile=True)
+        rhs_fp8, rhs_scale_r, _, rhs_scale_l = quantize_fp8(
+            rhs, max_exp=max_exp, is_sqtile=True
+        )
 
         if is_bias:
             bias = torch.randn((N), device=DEVICE)

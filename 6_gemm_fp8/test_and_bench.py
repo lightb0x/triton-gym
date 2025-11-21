@@ -6,17 +6,22 @@ from utils import generate_range, reconstruct
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
+
 class Q_fp8(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, max_exp, is_sqtile, is_left):
-        x_fp8_r, x_scale_r, x_fp8_l, x_scale_l = quantize_fp8(x, max_exp=max_exp, is_sqtile=is_sqtile)
+        x_fp8_r, x_scale_r, x_fp8_l, x_scale_l = quantize_fp8(
+            x, max_exp=max_exp, is_sqtile=is_sqtile
+        )
         if is_left:
             return reconstruct(x_fp8_l, x_scale_l)
         else:
             return reconstruct(x_fp8_r, x_scale_r)
+
     @staticmethod
     def backward(ctx, grad_output):
         return grad_output, None, None, None
+
 
 class LinearGM(torch.nn.Module):
     def __init__(
@@ -56,15 +61,23 @@ class LinearGM(torch.nn.Module):
 _CONFIGS = [
     triton.testing.Benchmark(
         x_names=["N"],
-        x_vals=generate_range(128, 8, 16384+1),
+        x_vals=generate_range(128, 8, 16384 + 1),
         line_arg="provider",
         line_vals=["triton", "torch"],
         line_names=["Triton", "Torch"],
         styles=[("green", "-"), ("blue", "-")],
         ylabel="TFLOPS",
-        plot_name="-".join(["linear", f"bias{use_bias}", "fwd" + "bwd" if include_backward else ""]),
+        plot_name="-".join(
+            ["linear", f"bias{use_bias}", "fwd" + ("bwd" if include_backward else "")]
+        ),
         args={"include_backward": include_backward, "use_bias": use_bias},
-    ) for (include_backward, use_bias) in [(True, True), (True, False), (False, True), (False, False)]
+    )
+    for (include_backward, use_bias) in [
+        (True, True),
+        (True, False),
+        (False, True),
+        (False, False),
+    ]
 ]
 
 
@@ -83,11 +96,13 @@ def benchmark(N, provider, include_backward, use_bias):
     input_x = torch.randn_like(init_param)
 
     if include_backward:
+
         def bench_run():
             module(input_x).sum().backward()
 
         ms = triton.testing.do_bench(bench_run)
     else:
+
         def bench_run():
             module(input_x)
 
@@ -98,14 +113,13 @@ def benchmark(N, provider, include_backward, use_bias):
     return tflops(ms)
 
 
-
 if __name__ == "__main__":
     seed = 42
     max_exp = 12
 
-    for M in generate_range(128, 4, 4096+1):
+    for M in generate_range(128, 4, 4096 + 1):
         N = M
-        for K in generate_range(128, 4, 4096+1):
+        for K in generate_range(128, 4, 4096 + 1):
             for use_bias in [True, False]:
                 print(f"(M, N, K): ({M}, {N}, {K}), bias={use_bias}", end="\t")
                 mod_gm = LinearGM(K, N, bias=use_bias, max_exp=max_exp)
@@ -134,14 +148,18 @@ if __name__ == "__main__":
                 fwd_error = torch.nn.functional.mse_loss(result_ours, result_gm)
                 errors.append(fwd_error.item())
 
-                wgt_grad_err = torch.nn.functional.mse_loss(mod_gm.weight.grad, mod_ours.weight.grad)
+                wgt_grad_err = torch.nn.functional.mse_loss(
+                    mod_gm.weight.grad, mod_ours.weight.grad
+                )
                 errors.append(wgt_grad_err.item())
 
                 act_grad_err = torch.nn.functional.mse_loss(t1.grad, t1_.grad)
                 errors.append(act_grad_err.item())
 
                 if use_bias:
-                    bias_grad_error = torch.nn.functional.mse_loss(mod_gm.bias.grad, mod_ours.bias.grad)
+                    bias_grad_error = torch.nn.functional.mse_loss(
+                        mod_gm.bias.grad, mod_ours.bias.grad
+                    )
                     errors.append(bias_grad_error.item())
 
                 print(errors)
