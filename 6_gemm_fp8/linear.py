@@ -1,5 +1,6 @@
 import torch
 import triton
+from config import BLOCK_SIZE
 from matmul_scaled import matmul_scaled
 from quantize_fp8 import quantize_fp8
 
@@ -105,6 +106,7 @@ class Linear(torch.nn.Module):
             "max_exp should be positive to leverage dynamic range of fp8_e5m2"
         )
         self.max_exp = max_exp
+        self.block_size = BLOCK_SIZE
 
         self.linear_function = gen_linear_func(self.max_exp, bias)
 

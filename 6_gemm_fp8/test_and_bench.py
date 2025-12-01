@@ -1,5 +1,6 @@
 import torch
 import triton
+from config import BLOCK_SIZE
 from linear import Linear
 from quantize_fp8 import quantize_fp8
 from utils import generate_range, reconstruct
@@ -31,7 +32,6 @@ class LinearGM(torch.nn.Module):
         bias=True,
         device=DEVICE,
         max_exp: int = 1,
-        block_size: int = 128,
     ):
         super().__init__()
         self.in_features = in_features
@@ -46,6 +46,7 @@ class LinearGM(torch.nn.Module):
             else None
         )
         self.max_exp = max_exp
+        self.block_size = BLOCK_SIZE
 
     def forward(self, x):
         x_fp8 = Q_fp8.apply(x, self.max_exp, False, True)
@@ -68,7 +69,7 @@ _CONFIGS = [
         styles=[("green", "-"), ("blue", "-")],
         ylabel="TFLOPS",
         plot_name="-".join(
-            ["linear", f"bias{use_bias}", "fwd" + ("bwd" if include_backward else "")]
+            ["linear", f"bias{use_bias}", "fwd" + ("bwd" if include_backward else ""), f"block{BLOCK_SIZE}"]
         ),
         args={"include_backward": include_backward, "use_bias": use_bias},
     )
