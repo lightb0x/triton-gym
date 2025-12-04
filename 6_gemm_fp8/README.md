@@ -1,6 +1,17 @@
 # GEMM-FP8
 Integrated quantize-GEMM module, "hybrid" variant
 
+Implements MX-like matrix multiplication:
+- row-block-wise times col-block-wise
+where block can be
+- 32 (MX specification)
+- 64 (most TFLOPS on 4090)
+- 128 (DeepSeek-V3 style)
+
+In contrast, [`torch._scaled_mm` supports](https://gist.github.com/drisspg/783616821043ab4594b9784f556c6714)
+- tensor-wise times tensor-wise
+- row-wise times col-wise
+
 ## Blueprint
 This module integrates quantize-GEMM as `Linear`, custom PyTorch module.
 
