@@ -38,6 +38,7 @@ def gen_linear_func(max_exp, use_bias):
                 rhs=wgt_fp8,
                 rhs_scale=wgt_scale_r,
                 bias=bias,
+                out_bf16=True,
             )
             return result.view([*orig_act_shape[:-1], orig_wgt_shape[0]])
 
@@ -58,6 +59,7 @@ def gen_linear_func(max_exp, use_bias):
                 lhs_scale=grad_out_scale_l,
                 rhs=act_fp8_bwd,
                 rhs_scale=act_scale_bwd,
+                out_bf16=False,
             )
 
             # wgt.t @ grad_out.t : (K, N) @ (N, M) --> (K, M)
@@ -68,6 +70,7 @@ def gen_linear_func(max_exp, use_bias):
                 rhs=grad_out_fp8_r,
                 rhs_scale=grad_out_scale_r,
                 out_transpose=True,
+                out_bf16=True,
             )
 
             if use_bias:

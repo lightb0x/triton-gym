@@ -31,6 +31,7 @@ def matmul_scaled_kernel(
     # scalar param
     is_bias: tl.constexpr,
     out_transpose: tl.constexpr,
+    out_bf16: tl.constexpr,
     # hyperparam
     BM: tl.constexpr,
     BN: tl.constexpr,
@@ -138,6 +139,9 @@ def matmul_scaled_kernel(
 
         accum += bias.reshape((1, BN)).broadcast_to((BM, BN))
 
+    if out_bf16:
+        accum = tl.cast(accum, dtype=tl.bfloat16)
+
     # store result
     if out_transpose:
         r_stride_n = M
@@ -163,7 +167,9 @@ def matmul_scaled_kernel(
     return
 
 
-def matmul_scaled(lhs, lhs_scale, rhs, rhs_scale, bias=None, out_transpose=False):
+def matmul_scaled(
+    lhs, lhs_scale, rhs, rhs_scale, bias=None, out_transpose=False, out_bf16=False
+):
     assert len(lhs.shape) == 2
     assert len(rhs.shape) == 2
     assert lhs.shape[-1] == rhs.shape[0]
@@ -178,9 +184,17 @@ def matmul_scaled(lhs, lhs_scale, rhs, rhs_scale, bias=None, out_transpose=False
     _, N = rhs.shape
 
     if out_transpose:
-        result = torch.empty((N, M), device=lhs.device)
+        result = torch.empty(
+            (N, M),
+            dtype=torch.bfloat16 if out_bf16 else torch.float32,
+            device=lhs.device,
+        )
     else:
-        result = torch.empty((M, N), device=lhs.device)
+        result = torch.empty(
+            (M, N),
+            dtype=torch.bfloat16 if out_bf16 else torch.float32,
+            device=lhs.device,
+        )
 
     def grid(meta):
         """
@@ -200,6 +214,7 @@ def matmul_scaled(lhs, lhs_scale, rhs, rhs_scale, bias=None, out_transpose=False
         K,
         bias is not None,
         out_transpose,
+        out_bf16,
     )
 
     return result
@@ -332,7 +347,10 @@ if __name__ == "__main__":
             func(lhs_fp8_l, lhs_scale_l, rhs_fp8, rhs_scale_r, bias, out_transpose)
 
         ms = triton.testing.do_bench(bench_run)
-        tflops = lambda ms: 2 * N * N * N * 1e-12 / (ms * 1e-3)
+
+        def tflops(ms):
+            return 2 * N * N * N * 1e-12 / (ms * 1e-3)
+
         return tflops(ms)
 
     print("running benchmark ...")
