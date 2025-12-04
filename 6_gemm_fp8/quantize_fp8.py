@@ -15,14 +15,43 @@ _CONFIGS = [
 
 @triton.jit
 def quantize_fp8_e8_func(x, max_exp, axis):
+    """
+    [NaN condition]
+    e_bit=8 yields exponent range [2**-126, 2**127] --> NaN if x >= 2**128
+    e_bit=5 yields exponent range [2**-14, 2**15]   --> NaN if x >= 2**16
+
+    if `x` is all zero or subnormal:
+        x_floorexp = -127
+        inv_scale = 2**(max_exp + 127) --> NaN if max_exp >= 1
+        x_scale = 2**(-max_exp - 127)
+    elif x_floorexp = -126:
+        inv_scale = 2**(max_exp + 126) --> NaN if max_exp >= 2
+        x_scale = 2**(-max_exp - 126)
+
+    [fix]
+    ideal conditions are
+    1. `(max_exp - x_safe_exp) <= 127` to prevent NaN scale
+        i.e., x_safe_exp >= max_exp - 127
+    2. `x_floorexp + max_exp - x_safe_exp <= 15` to prevent NaN after fp8 casting
+        i.e., x_safe_exp >= max_exp - 15 + x_floorexp
+        RHS range [max_exp - 142, max_exp + 112]
+    3. `x_floorexp + max_exp - x_safe_exp >= -16` to prevent round-to-zero after fp8 casting
+        i.e., x_safe_exp <= max_exp + 16 + x_floorexp
+        RHS range [max_exp - 111, max_exp + 143]
+    (no need to consider conditions 2 and 3)
+    therefore,
+        x_safe_exp = max(x_floorexp, max_exp-127)
+    """
     x_floorexp = fp32_maxexp(x, axis, keep_dims=True)
+    x_safe_exp = tl.where(x_floorexp < max_exp - 127, max_exp - 127, x_floorexp)
+
     inv_scale = tl.cast(
-        ((max_exp - x_floorexp + 127) & 0x0000_00FF) << 23,
+        ((max_exp - x_safe_exp + 127) & 0x0000_00FF) << 23,
         tl.float32,
         bitcast=True,
     )
     x_scale = tl.cast(
-        ((x_floorexp - max_exp + 127) & 0x0000_00FF) << 23,
+        ((x_safe_exp - max_exp + 127) & 0x0000_00FF) << 23,
         tl.float32,
         bitcast=True,
     )
