@@ -3,6 +3,7 @@ Integrated quantize-GEMM module, "hybrid" variant
 
 Implements MX-like matrix multiplication:
 - row-block-wise times col-block-wise
+
 where block can be
 - 32 (MX specification)
 - 64 (most TFLOPS on 4090)
