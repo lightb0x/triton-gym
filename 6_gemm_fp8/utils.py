@@ -114,6 +114,13 @@ def fp32_maxexp(x, axis=None, keep_dims=False):
 
 
 @triton.jit
+def bf16_maxexp(x, axis=None, keep_dims=False):
+    x_i16 = tl.cast(x, dtype=tl.int16, bitcast=True)
+    x_exp = (x_i16 & 0x7F80) >> 7  # extract exponent from 1-8-7
+    return tl.max(x_exp, axis=axis, keep_dims=keep_dims) - 127  # bf16 bias 127
+
+
+@triton.jit
 def fp32_absmax(x, axis=None, keep_dims=False):
     x_i32 = tl.cast(x, dtype=tl.int32, bitcast=True)
     x_exp_man = x_i32 & 0x7FFF_FFFF
