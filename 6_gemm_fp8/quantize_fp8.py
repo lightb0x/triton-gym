@@ -174,11 +174,19 @@ def quantize_fp8_kernel(
 
             else:
                 if is_bf16:
-                    x_fp8_r, x_scale_r = quantize_bf16_to_fp8_e8_func(x, max_exp, axis=0)
-                    x_fp8_l, x_scale_l = quantize_bf16_to_fp8_e8_func(x, max_exp, axis=1)
+                    x_fp8_r, x_scale_r = quantize_bf16_to_fp8_e8_func(
+                        x, max_exp, axis=0
+                    )
+                    x_fp8_l, x_scale_l = quantize_bf16_to_fp8_e8_func(
+                        x, max_exp, axis=1
+                    )
                 else:
-                    x_fp8_r, x_scale_r = quantize_fp32_to_fp8_e8_func(x, max_exp, axis=0)
-                    x_fp8_l, x_scale_l = quantize_fp32_to_fp8_e8_func(x, max_exp, axis=1)
+                    x_fp8_r, x_scale_r = quantize_fp32_to_fp8_e8_func(
+                        x, max_exp, axis=0
+                    )
+                    x_fp8_l, x_scale_l = quantize_fp32_to_fp8_e8_func(
+                        x, max_exp, axis=1
+                    )
 
                 if out_trans:
                     # (block_size, block_size) out of (N, M)
@@ -296,7 +304,7 @@ def quantize_fp8(x, max_exp: int, is_sqtile: bool = False, out_trans: bool = Fal
         max_exp,
         is_sqtile,
         out_trans,
-        is_bf16=x.dtype==torch.bfloat16,
+        is_bf16=x.dtype == torch.bfloat16,
     )
 
     return x_fp8_r, x_scale_r, x_fp8_l, x_scale_l
@@ -537,7 +545,10 @@ if __name__ == "__main__":
             func(x, max_exp=9, is_sqtile=is_sqtile, out_trans=out_trans)
 
         ms = triton.testing.do_bench(bench_run)
-        gelems = lambda ms: N * N * 1e-9 / (ms * 1e-3)
+
+        def gelems(ms):
+            return N * N * 1e-9 / (ms * 1e-3)
+
         return gelems(ms)
 
     print("running benchmark ...")
