@@ -128,7 +128,7 @@ def matmul_scaled_kernel(
         rhs_scale = tl.load(g_rhs_scale_ptrs, mask=rhs_mask_sk & rhs_mask_n)
 
         # compute fp8 dot & scaled-accumulate
-        accum += tl.dot(lhs, rhs) * (lhs_scale * rhs_scale)
+        accum = tl.fma(tl.dot(lhs, rhs), lhs_scale * rhs_scale, accum)
 
     # handle bias
     if is_bias:
@@ -173,6 +173,8 @@ def matmul_scaled(
     assert len(lhs.shape) == 2
     assert len(rhs.shape) == 2
     assert lhs.shape[-1] == rhs.shape[0]
+    assert lhs_scale.dtype == torch.float32
+    assert rhs_scale.dtype == torch.float32
 
     assert triton.cdiv(lhs.shape[-1], BLOCK_SIZE) == lhs_scale.shape[-1]
     assert triton.cdiv(rhs.shape[0], BLOCK_SIZE) == rhs_scale.shape[0]
@@ -299,10 +301,10 @@ if __name__ == "__main__":
             args={"is_bias": is_bias, "out_transpose": out_transpose},
         )
         for (is_bias, out_transpose) in [
-            (True, False),
             (False, False),
-            (True, True),
             (False, True),
+            (True, False),
+            (True, True),
         ]
     ]
 

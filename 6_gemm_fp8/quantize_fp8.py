@@ -59,7 +59,7 @@ def quantize_fp32_to_fp8_e8_func(x, max_exp, axis):
     2. `x_floorexp + max_exp - x_safe_exp <= 15` to prevent NaN after fp8 casting
         i.e., x_safe_exp >= max_exp - 15 + x_floorexp
         RHS range [max_exp - 142, max_exp + 112]
-    3. `(x_safe_exp - max_exp) <= 63` to to prevent NaN scale during `matmul_scaled`
+    3. `(x_safe_exp - max_exp) <= 63` to prevent NaN scale during `matmul_scaled`
         i.e., x_safe_exp <= max_exp + 63
     (no need to consider condition 2)
     therefore,
@@ -439,8 +439,8 @@ def quantize_fp8(x, max_exp: int, is_sqtile: bool = False, out_trans: bool = Fal
         x_fp8_l = None
     else:
         x_fp8_l = torch.empty(out_shape, device=x.device, dtype=torch.float8_e5m2)
-    x_scale_r = torch.empty(scale_r_shape, device=x.device)
-    x_scale_l = torch.empty(scale_l_shape, device=x.device)
+    x_scale_r = torch.empty(scale_r_shape, device=x.device, dtype=torch.float32)
+    x_scale_l = torch.empty(scale_l_shape, device=x.device, dtype=torch.float32)
 
     if x.dtype == torch.float32:
         quantize_kernel = quantize_fp32_to_fp8_kernel

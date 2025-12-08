@@ -7,6 +7,7 @@ from config import BLOCK_SIZE
 def reconstruct(x_fp8, x_scale):
     assert len(x_fp8.shape) == 2
     assert len(x_scale.shape) == 2
+    assert x_scale.dtype == torch.float32
 
     M, N = x_fp8.shape
     Ms, Ns = x_scale.shape
