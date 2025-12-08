@@ -5,10 +5,14 @@ from config import BLOCK_SIZE
 from utils import fp32_absmax, fp32_maxexp
 
 _CONFIGS = [
-    triton.Config({"BM": bm, "BN": bn}, num_warps=nw)
-    for (bm, bn, nw) in [
-        (1, 1, 4),
-        (1, 1, 8),
+    triton.Config({"BM": bm, "BN": bn}, num_warps=nw, num_stages=ns)
+    for (bm, bn, nw, ns) in [
+        (1, 1, 4, 2),
+        (1, 1, 8, 2),
+        (1, 1, 4, 3),
+        (1, 1, 8, 3),
+        (1, 1, 4, 4),
+        (1, 1, 8, 4),
     ]
 ]
 
@@ -35,15 +39,15 @@ def quantize_fp8_e8_func(x, max_exp, axis):
     2. `x_floorexp + max_exp - x_safe_exp <= 15` to prevent NaN after fp8 casting
         i.e., x_safe_exp >= max_exp - 15 + x_floorexp
         RHS range [max_exp - 142, max_exp + 112]
-    3. `x_floorexp + max_exp - x_safe_exp >= -16` to prevent round-to-zero after fp8 casting
-        i.e., x_safe_exp <= max_exp + 16 + x_floorexp
-        RHS range [max_exp - 111, max_exp + 143]
-    (no need to consider conditions 2 and 3)
+    3. `(x_safe_exp - max_exp) <= 63` to to prevent NaN scale during `matmul_scaled`
+        i.e., x_safe_exp <= max_exp + 63
+    (no need to consider condition 2)
     therefore,
-        x_safe_exp = max(x_floorexp, max_exp-127)
+        x_safe_exp = clamp(x_floorexp, min=max_exp-127, max=max_exp+63)
     """
     x_floorexp = fp32_maxexp(x, axis, keep_dims=True)
     x_safe_exp = tl.where(x_floorexp < max_exp - 127, max_exp - 127, x_floorexp)
+    x_safe_exp = tl.where(x_floorexp > max_exp + 63, max_exp + 63, x_safe_exp)
 
     inv_scale = tl.cast(
         ((max_exp - x_safe_exp + 127) & 0x0000_00FF) << 23,
@@ -71,7 +75,9 @@ def quantize_fp8_e8m23_func(x, max_exp, axis):
     return x_fp8, x_scale
 
 
-@triton.autotune(configs=_CONFIGS, key=["M", "N", "block_size", "is_sqtile"])
+@triton.autotune(
+    configs=_CONFIGS, key=["M", "N", "block_size", "is_sqtile", "out_trans"]
+)
 @triton.jit
 def quantize_fp8_kernel(
     # pointer i/o
