@@ -87,7 +87,7 @@ def quantize_fp32_to_fp8_e8_func(x, max_exp, axis):
     configs=_CONFIGS, key=["M", "N", "block_size", "is_sqtile", "out_trans"]
 )
 @triton.jit
-def quantize_fp32_to_fp8_kernel(
+def quantize_fp8_kernel(
     # pointer i/o
     g_x,
     g_x_fp8_r,
@@ -102,6 +102,7 @@ def quantize_fp32_to_fp8_kernel(
     max_exp: tl.constexpr,
     is_sqtile: tl.constexpr,
     out_trans: tl.constexpr,
+    is_bf16: tl.constexpr,
     # hyperparam
     BM: tl.constexpr,
     BN: tl.constexpr,
@@ -150,7 +151,10 @@ def quantize_fp32_to_fp8_kernel(
                 mask_out_n = offs_n[None, :] < N
 
             if is_sqtile:
-                x_fp8, x_scale = quantize_fp32_to_fp8_e8_func(x, max_exp, axis=None)
+                if is_bf16:
+                    x_fp8, x_scale = quantize_bf16_to_fp8_e8_func(x, max_exp, axis=None)
+                else:
+                    x_fp8, x_scale = quantize_fp32_to_fp8_e8_func(x, max_exp, axis=None)
                 if out_trans:
                     g_x_fp8_ptrs = g_x_fp8_r + (
                         offs_n[:, None] * stride_out_n + offs_m[None, :] * stride_out_m
@@ -169,174 +173,12 @@ def quantize_fp32_to_fp8_kernel(
                 x_scale_l = tl.broadcast_to(x_scale, (block_size, 1))
 
             else:
-                x_fp8_r, x_scale_r = quantize_fp32_to_fp8_e8_func(x, max_exp, axis=0)
-                x_fp8_l, x_scale_l = quantize_fp32_to_fp8_e8_func(x, max_exp, axis=1)
-
-                if out_trans:
-                    # (block_size, block_size) out of (N, M)
-                    # value fp8_l.t to GMEM fp8_r
-                    g_x_fp8_r_ptrs = g_x_fp8_r + (
-                        offs_n[:, None] * stride_out_n + offs_m[None, :] * stride_out_m
-                    )
-                    x_fp8_l = tl.trans(x_fp8_l, (1, 0))
-                    tl.store(g_x_fp8_r_ptrs, x_fp8_l, mask=mask_out_n & mask_out_m)
-
-                    # value fp8_r.t to GMEM fp8_l
-                    g_x_fp8_l_ptrs = g_x_fp8_l + (
-                        offs_n[:, None] * stride_out_n + offs_m[None, :] * stride_out_m
-                    )
-                    x_fp8_r = tl.trans(x_fp8_r, (1, 0))
-                    tl.store(g_x_fp8_l_ptrs, x_fp8_r, mask=mask_out_n & mask_out_m)
+                if is_bf16:
+                    x_fp8_r, x_scale_r = quantize_bf16_to_fp8_e8_func(x, max_exp, axis=0)
+                    x_fp8_l, x_scale_l = quantize_bf16_to_fp8_e8_func(x, max_exp, axis=1)
                 else:
-                    # (block_size, block_size) out of (M, N)
-                    # value fp8_r to GMEM fp8_r
-                    g_x_fp8_r_ptrs = g_x_fp8_r + (
-                        offs_m[:, None] * stride_out_m + offs_n[None, :] * stride_out_n
-                    )
-                    tl.store(g_x_fp8_r_ptrs, x_fp8_r, mask=mask_out_m & mask_out_n)
-
-                    # value fp8_l to GMEM fp8_l
-                    g_x_fp8_l_ptrs = g_x_fp8_l + (
-                        offs_m[:, None] * stride_out_m + offs_n[None, :] * stride_out_n
-                    )
-                    tl.store(g_x_fp8_l_ptrs, x_fp8_l, mask=mask_out_m & mask_out_n)
-
-            offs_sm = pid_m * BM + i_m + tl.arange(0, 1)
-            offs_sn = pid_n * BN + i_n + tl.arange(0, 1)
-
-            if out_trans:
-                # value scale_r.t to GMEM scale_l
-                # (BLOCK_SIZE, 1) out of (N, cdiv(M, BLOCK_SIZE))
-                g_x_scale_l_ptrs = g_x_scale_l + (
-                    offs_n[:, None] * stride_out_sn + offs_sm[None, :] * stride_out_m
-                )
-                mask_out_sm = offs_sm[None, :] < SM
-                tl.store(
-                    g_x_scale_l_ptrs,
-                    tl.trans(x_scale_r, (1, 0)),
-                    mask=mask_out_n & mask_out_sm,
-                )
-
-                # value scale_l.t to GMEM scale_r
-                # (1, BLOCK_SIZE) out of (cdiv(N, BLOCK_SIZE), M)
-                g_x_scale_r_ptrs = g_x_scale_r + (
-                    offs_sn[:, None] * stride_out_n + offs_m[None, :] * stride_out_sm
-                )
-                mask_out_sn = offs_sn[:, None] < SN
-                tl.store(
-                    g_x_scale_r_ptrs,
-                    tl.trans(x_scale_l, (1, 0)),
-                    mask=mask_out_sn & mask_out_m,
-                )
-
-            else:
-                # (1, BLOCK_SIZE) out of (cdiv(M, BLOCK_SIZE), N)
-                offs_sm = pid_m * BM + i_m + tl.arange(0, 1)
-                g_x_scale_r_ptrs = g_x_scale_r + (
-                    offs_sm[:, None] * stride_out_m + offs_n[None, :] * stride_out_sn
-                )
-                mask_out_sm = offs_sm[:, None] < SM
-                tl.store(g_x_scale_r_ptrs, x_scale_r, mask=mask_out_sm & mask_out_n)
-
-                # (BLOCK_SIZE, 1) out of (M, cdiv(N, BLOCK_SIZE))
-                offs_sn = pid_n * BN + i_n + tl.arange(0, 1)
-                g_x_scale_l_ptrs = g_x_scale_l + (
-                    offs_m[:, None] * stride_out_sm + offs_sn[None, :] * stride_out_n
-                )
-                mask_out_sn = offs_sn[None, :] < SN
-                tl.store(g_x_scale_l_ptrs, x_scale_l, mask=mask_out_m & mask_out_sn)
-
-    return
-
-
-@triton.autotune(
-    configs=_CONFIGS, key=["M", "N", "block_size", "is_sqtile", "out_trans"]
-)
-@triton.jit
-def quantize_bf16_to_fp8_kernel(
-    # pointer i/o
-    g_x,
-    g_x_fp8_r,
-    g_x_scale_r,
-    g_x_fp8_l,
-    g_x_scale_l,
-    # pointer shape
-    M,
-    N,
-    # scalar param
-    block_size: tl.constexpr,
-    max_exp: tl.constexpr,
-    is_sqtile: tl.constexpr,
-    out_trans: tl.constexpr,
-    # hyperparam
-    BM: tl.constexpr,
-    BN: tl.constexpr,
-):
-    pid = tl.program_id(axis=0)
-
-    pid_m = pid // tl.cdiv(N, BN * block_size)
-    pid_n = pid % tl.cdiv(N, BN * block_size)
-
-    stride_m = N
-    stride_n = 1
-
-    SM = tl.cdiv(M, block_size)
-    SN = tl.cdiv(N, block_size)
-
-    if out_trans:
-        stride_out_n = M
-        stride_out_m = 1
-        stride_out_sn = SM
-        stride_out_sm = 1
-    else:
-        stride_out_m = N
-        stride_out_n = 1
-        stride_out_sm = SN
-        stride_out_sn = 1
-
-    for i_m in tl.static_range(0, BM):
-        for i_n in tl.static_range(0, BN):
-            offs_m = (
-                pid_m * BM * block_size + i_m * block_size + tl.arange(0, block_size)
-            )
-            offs_n = (
-                pid_n * BN * block_size + i_n * block_size + tl.arange(0, block_size)
-            )
-
-            g_x_ptrs = g_x + (offs_m[:, None] * stride_m + offs_n[None, :] * stride_n)
-            mask_m = offs_m[:, None] < M
-            mask_n = offs_n[None, :] < N
-            x = tl.load(g_x_ptrs, mask=mask_m & mask_n)
-
-            if out_trans:
-                mask_out_n = offs_n[:, None] < N
-                mask_out_m = offs_m[None, :] < M
-            else:
-                mask_out_m = offs_m[:, None] < M
-                mask_out_n = offs_n[None, :] < N
-
-            if is_sqtile:
-                x_fp8, x_scale = quantize_bf16_to_fp8_e8_func(x, max_exp, axis=None)
-                if out_trans:
-                    g_x_fp8_ptrs = g_x_fp8_r + (
-                        offs_n[:, None] * stride_out_n + offs_m[None, :] * stride_out_m
-                    )
-                    x_fp8 = tl.trans(x_fp8, (1, 0))
-                else:
-                    g_x_fp8_ptrs = g_x_fp8_r + (
-                        offs_m[:, None] * stride_out_m + offs_n[None, :] * stride_out_n
-                    )
-                tl.store(g_x_fp8_ptrs, x_fp8, mask=mask_out_m & mask_out_n)
-
-                # (1, 1) --> (1, BLOCK_SIZE)
-                x_scale_r = tl.broadcast_to(x_scale, (1, block_size))
-
-                # (1, 1) --> (BLOCK_SIZE, 1)
-                x_scale_l = tl.broadcast_to(x_scale, (block_size, 1))
-
-            else:
-                x_fp8_r, x_scale_r = quantize_bf16_to_fp8_e8_func(x, max_exp, axis=0)
-                x_fp8_l, x_scale_l = quantize_bf16_to_fp8_e8_func(x, max_exp, axis=1)
+                    x_fp8_r, x_scale_r = quantize_fp32_to_fp8_e8_func(x, max_exp, axis=0)
+                    x_fp8_l, x_scale_l = quantize_fp32_to_fp8_e8_func(x, max_exp, axis=1)
 
                 if out_trans:
                     # (block_size, block_size) out of (N, M)
@@ -442,13 +284,7 @@ def quantize_fp8(x, max_exp: int, is_sqtile: bool = False, out_trans: bool = Fal
     x_scale_r = torch.empty(scale_r_shape, device=x.device, dtype=torch.float32)
     x_scale_l = torch.empty(scale_l_shape, device=x.device, dtype=torch.float32)
 
-    if x.dtype == torch.float32:
-        quantize_kernel = quantize_fp32_to_fp8_kernel
-    else:
-        assert x.dtype == torch.bfloat16
-        quantize_kernel = quantize_bf16_to_fp8_kernel
-
-    quantize_kernel[grid](
+    quantize_fp8_kernel[grid](
         x,
         x_fp8_r,
         x_scale_r,
@@ -460,6 +296,7 @@ def quantize_fp8(x, max_exp: int, is_sqtile: bool = False, out_trans: bool = Fal
         max_exp,
         is_sqtile,
         out_trans,
+        is_bf16=x.dtype==torch.bfloat16,
     )
 
     return x_fp8_r, x_scale_r, x_fp8_l, x_scale_l
