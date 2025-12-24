@@ -2,27 +2,32 @@ import torch
 import triton
 import triton.language as tl
 from triton.language.extra import libdevice
+from triton.runtime import driver
+
+DEVICE = triton.runtime.driver.active.get_active_torch_device()
+NUM_SM = driver.active.utils.get_device_properties(DEVICE.index)["multiprocessor_count"]
+NUM_TC = NUM_SM * 4  # 4 tensor cores per SM (Ampere, Ada, Blackwell)
 
 _CONFIGS = [
     triton.Config({"BM": bm, "BN": bn, "BK": bk}, num_stages=ns, num_warps=nw)
-    for (bm, bn, bk, gm, ns, nw) in [
-        (128, 256, 64, 8, 3, 8),
-        (64, 256, 32, 8, 4, 4),
-        (128, 128, 32, 8, 4, 4),
-        (128, 64, 32, 8, 4, 4),
-        (64, 128, 32, 8, 4, 4),
-        (128, 32, 32, 8, 4, 4),
-        (64, 32, 32, 8, 5, 2),
-        (32, 64, 32, 8, 5, 2),
+    for (bm, bn, bk, ns, nw) in [
+        (128, 256, 64, 3, 8),
+        (64, 256, 32, 4, 4),
+        (128, 128, 32, 4, 4),
+        (128, 64, 32, 4, 4),
+        (64, 128, 32, 4, 4),
+        (128, 32, 32, 4, 4),
+        (64, 32, 32, 5, 2),
+        (32, 64, 32, 5, 2),
         # fp8
-        (128, 256, 128, 8, 3, 8),
-        (256, 128, 128, 8, 3, 8),
-        (256, 64, 128, 8, 4, 4),
-        (64, 256, 128, 8, 4, 4),
-        (128, 128, 128, 8, 4, 4),
-        (128, 64, 64, 8, 4, 4),
-        (64, 128, 64, 8, 4, 4),
-        (128, 32, 64, 8, 4, 4),
+        (128, 256, 128, 3, 8),
+        (256, 128, 128, 3, 8),
+        (256, 64, 128, 4, 4),
+        (64, 256, 128, 4, 4),
+        (128, 128, 128, 4, 4),
+        (128, 64, 64, 4, 4),
+        (64, 128, 64, 4, 4),
+        (128, 32, 64, 4, 4),
     ]
 ]
 
@@ -41,6 +46,7 @@ def matmul_kernel(
     K,
     # scalar param
     is_bias: tl.constexpr,
+    batch_proc: tl.constexpr,
     # hyperparam
     BM: tl.constexpr,
     BN: tl.constexpr,
@@ -50,17 +56,14 @@ def matmul_kernel(
     # GM: tl.constexpr = 8
 
     # Adaptive GM
-    # # consistently outperforms fixed GM=8 on average
-    # # BF16 bias=False --> 0.0426197 %
-    # # BF16 bias=True  --> 0.671729  %
-    # # FP8  bias=False --> 0.2751545 %
-    # # FP8  bias=True  --> 2.2620753 %
-    # GM = sqrt(N / BM) and floor-power-of-two
-    # GM = 1 if N / BM in [1, 4)    ..0000_0000_0001  0
-    # GM = 2 if N / BM in [4, 16)   ..0000_0000_0100  2
-    # GM = 4 if N / BM in [16, 64)  ..0000_0001_0000  4
-    # GM = 8 if N / BM in [64, 256) ..0000_0100_0000  8
-    GM: tl.constexpr = 1 << (max(0, 31 - libdevice.clz(N // BM)) >> 1)
+    # GM = sqrt(BN * batch_proc / BM) and floor-power-of-two
+    # x=(BN * batch_proc / BM)   y=31-clz(x)   z=y>>1   1<<z (ours)   sqrt(x)
+    # [1, 4)                     [0, 2)        0        1             [1, 2)
+    # [4, 16)                    [2, 4)        1        2             [2, 4)
+    # [16, 64)                   [4, 6)        2        4             [4, 8)
+    # [64, 256) `                [6, 8)        3        8             [8, 16)
+    eff_batch = min(batch_proc, tl.num_programs(axis=0))
+    GM: tl.constexpr = 1 << (max(0, 31 - libdevice.clz(BN * eff_batch // BM)) >> 1)
 
     pid = tl.program_id(axis=0)
     pid_per_m = tl.cdiv(M, BM)
@@ -155,7 +158,8 @@ def matmul(lhs, rhs, bias=None):
         """
         return (triton.cdiv(M, meta["BM"]) * triton.cdiv(N, meta["BN"]),)
 
-    matmul_kernel[grid](lhs, rhs, bias, result, M, N, K, bias is not None)
+    batch_proc = NUM_TC  # Assume single (BM, BN) output block per tensor core
+    matmul_kernel[grid](lhs, rhs, bias, result, M, N, K, bias is not None, batch_proc)
 
     return result.view([*lhs_orig_shape[:-1], N])
 
