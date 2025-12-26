@@ -3,12 +3,11 @@ import triton
 import triton.language as tl
 
 _CONFIGS = [
-    triton.Config({"BN": bn}, num_warps=nw)
-    for (bn, nw) in [
-        # (4, 1),  # test
-        (4096, 8),
-        (8192, 8),
+    triton.Config({"BN": bn}, num_stages=ns)
+    for (bn, ns) in [
+        (4096, 3),
         (4096, 4),
+        (8192, 3),
         (8192, 4),
     ]
 ]
@@ -68,8 +67,10 @@ def mask_func(x, x_mask):
     N = x.numel()
 
     result = torch.empty_like(x)
+
     def grid(meta):
-        return (triton.cdiv(N, meta["BN"]), )
+        return (triton.cdiv(N, meta["BN"]),)
+
     mask_kernel[grid](x, x_mask, result, N)
 
     return result.view(orig_shape)

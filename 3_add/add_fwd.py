@@ -3,13 +3,15 @@ import triton
 import triton.language as tl
 
 _CONFIGS = [
-    triton.Config({"BN": bn}, num_warps=nw) for (bn, nw) in [
-        (4096, 8),
-        (8192, 8),
+    triton.Config({"BN": bn}, num_stages=ns)
+    for (bn, ns) in [
+        (4096, 3),
         (4096, 4),
+        (8192, 3),
         (8192, 4),
     ]
 ]
+
 
 @triton.autotune(
     configs=_CONFIGS,
@@ -24,7 +26,7 @@ def add_kernel(
     # pointer shape
     N,
     # hyperparams
-    BN: tl.constexpr
+    BN: tl.constexpr,
 ):
     pid = tl.program_id(axis=0)
 
@@ -44,6 +46,7 @@ def add_kernel(
     tl.store(g_out_ptrs, result, mask=mask)
 
     return
+
 
 def add_fwd_func(lhs, rhs):
     """
@@ -75,15 +78,14 @@ def add_fwd_func(lhs, rhs):
 
     # subprocess grid
     # every process handles "BN" elements out of total "N" elems
-    grid = lambda meta: (
-        triton.cdiv(N, meta["BN"]),
-    )
+    grid = lambda meta: (triton.cdiv(N, meta["BN"]),)
 
     add_kernel[grid](lhs, rhs, result, N)
 
     return result.view(orig_shape)
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     # test drive
     DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
