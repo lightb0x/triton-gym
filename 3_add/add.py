@@ -1,4 +1,3 @@
-
 import torch
 from add_bwd import mask_func
 from add_fwd import add_fwd_func
@@ -14,6 +13,7 @@ class AddFunction(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         return grad_output, grad_output
+
 
 class AddReluFunction(torch.autograd.Function):
     @staticmethod
@@ -33,14 +33,16 @@ class AddReluFunction(torch.autograd.Function):
 
         return grad_input, grad_input
 
+
 class Add(torch.nn.Module):
     def __init__(self, init_param, apply_relu=False):
         super().__init__()
         self.bias = torch.nn.Parameter(init_param, requires_grad=True)
         self.apply_relu = apply_relu
+        if self.apply_relu:
+            self.func = AddReluFunction
+        else:
+            self.func = AddFunction
 
     def forward(self, x):
-        if self.apply_relu:
-            return AddReluFunction.apply(self.bias, x)
-        else:
-            return AddFunction.apply(self.bias, x)
+        return self.func.apply(x, self.bias)
