@@ -16,10 +16,27 @@ class AddReluGM(torch.nn.Module):
         else:
             return self.bias + x
 
+
+def generate_range(start, num_steps, until):
+    """
+    generates floating-point-like range
+    """
+    current = start
+    step = start
+    arr = []
+    while current < until:
+        arr.append(current)
+        current += step
+        if current == step * num_steps:
+            step *= 2
+
+    return arr
+
+
 _CONFIGS = [
     triton.testing.Benchmark(
         x_names=["N"],
-        x_vals=[2**i for i in range(4, 17)],
+        x_vals=[i for i in generate_range(128, 4, 16384 + 1)],
         line_arg="provider",
         line_vals=["triton", "torch"],
         line_names=["Triton", "Torch"],
@@ -27,14 +44,19 @@ _CONFIGS = [
         ylabel="Gelem/s",
         plot_name="-".join(["benchmark", f"relu{apply_relu}", f"bwd{include_bwd}"]),
         args={"apply_relu": apply_relu, "include_bwd": include_bwd},
-) for apply_relu in [True, False] for include_bwd in [True, False]]
+    )
+    for apply_relu in [True, False]
+    for include_bwd in [True, False]
+]
+
 
 @triton.testing.perf_report(_CONFIGS)
 def benchmark(N, provider, apply_relu, include_bwd):
-    init_param = torch.randn(N, device=DEVICE, dtype=torch.float32)
     stream = getattr(torch, DEVICE.type).Stream()
     getattr(torch, DEVICE.type).set_stream(stream)
-    if provider == 'torch':
+
+    init_param = torch.randn(size=(N, N), device=DEVICE, dtype=torch.float32)
+    if provider == "torch":
         module = AddReluGM(init_param, apply_relu)
     else:
         assert provider == "triton"
@@ -45,7 +67,7 @@ def benchmark(N, provider, apply_relu, include_bwd):
         ms = triton.testing.do_bench(lambda: module(input_x).sum().backward())
     else:
         ms = triton.testing.do_bench(lambda: module(input_x))
-    gbps = lambda ms: N * 1e-9 / (ms * 1e-3)
+    gbps = lambda ms: N * N * 1e-9 / (ms * 1e-3)
     return gbps(ms)
 
 
