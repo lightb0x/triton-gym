@@ -71,10 +71,26 @@ def reconstruct(x_fp8, x_scale, block_size=None):
         return x_fp8.to(torch.float) * x_scale_brt
 
 
+def generate_range(start, num_steps, until):
+    """
+    generates floating-point-like range
+    """
+    current = start
+    step = start
+    arr = []
+    while current < until:
+        arr.append(current)
+        current += step
+        if current == step * num_steps:
+            step *= 2
+
+    return arr
+
+
 _CONFIGS = [
     triton.testing.Benchmark(
         x_names=["N"],
-        x_vals=[2**i for i in range(4, 15)],
+        x_vals=[i for i in generate_range(128, 4, 16384 + 1)],
         line_arg="provider",
         line_vals=["triton", "torch"],
         line_names=["Triton", "Torch"],
